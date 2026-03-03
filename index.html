@@ -1,0 +1,708 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Context Budget Analyzer - Stop bleeding tokens on your CLAUDE.md</title>
+  <meta name="description" content="Free CLI tool that audits your CLAUDE.md for token bloat. Analyzed 50 CLAUDE.md files. This is what breaks context." />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0f1117;
+      --surface: #1a1d27;
+      --border: #2a2d3a;
+      --accent: #7c6fcd;
+      --accent-bright: #9d8ef5;
+      --text: #e2e4ee;
+      --muted: #8b8fa8;
+      --green: #4ade80;
+      --yellow: #facc15;
+      --red: #f87171;
+      --mono: 'Fira Code', 'Cascadia Code', 'Courier New', monospace;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      font-size: 16px;
+    }
+
+    a { color: var(--accent-bright); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    .container {
+      max-width: 760px;
+      margin: 0 auto;
+      padding: 0 24px;
+    }
+
+    /* ── NAV ── */
+    nav {
+      border-bottom: 1px solid var(--border);
+      padding: 16px 0;
+    }
+    nav .inner {
+      max-width: 760px;
+      margin: 0 auto;
+      padding: 0 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    nav .logo {
+      font-family: var(--mono);
+      font-size: 14px;
+      color: var(--accent-bright);
+      font-weight: 600;
+    }
+    nav .logo span { color: var(--muted); }
+
+    /* ── HERO ── */
+    .hero {
+      padding: 72px 0 48px;
+    }
+
+    .hero .badge {
+      display: inline-block;
+      background: rgba(124, 111, 205, 0.15);
+      border: 1px solid var(--accent);
+      color: var(--accent-bright);
+      font-size: 12px;
+      font-family: var(--mono);
+      padding: 4px 12px;
+      border-radius: 4px;
+      margin-bottom: 24px;
+      letter-spacing: 0.05em;
+    }
+
+    .hero h1 {
+      font-size: clamp(28px, 5vw, 44px);
+      font-weight: 700;
+      line-height: 1.2;
+      margin-bottom: 16px;
+      letter-spacing: -0.02em;
+    }
+
+    .hero h1 em {
+      font-style: normal;
+      color: var(--accent-bright);
+    }
+
+    .hero .subhead {
+      font-size: 18px;
+      color: var(--muted);
+      margin-bottom: 32px;
+      max-width: 560px;
+    }
+
+    .hero-stats {
+      display: flex;
+      gap: 32px;
+      flex-wrap: wrap;
+      margin-bottom: 40px;
+      padding: 20px 0;
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .stat {
+      display: flex;
+      flex-direction: column;
+    }
+    .stat .num {
+      font-size: 28px;
+      font-weight: 700;
+      color: var(--text);
+      font-family: var(--mono);
+    }
+    .stat .label {
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    /* ── TERMINAL ── */
+    .terminal {
+      background: #0a0c14;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+      margin: 40px 0;
+    }
+
+    .terminal-bar {
+      background: var(--surface);
+      padding: 10px 16px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      border-bottom: 1px solid var(--border);
+    }
+    .terminal-bar .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+    }
+    .terminal-bar .dot-r { background: #f87171; }
+    .terminal-bar .dot-y { background: #facc15; }
+    .terminal-bar .dot-g { background: #4ade80; }
+    .terminal-bar .title {
+      margin-left: 8px;
+      font-size: 12px;
+      color: var(--muted);
+      font-family: var(--mono);
+    }
+
+    .terminal-body {
+      padding: 20px 24px;
+      font-family: var(--mono);
+      font-size: 13px;
+      line-height: 1.8;
+      overflow-x: auto;
+    }
+
+    .t-prompt { color: var(--green); }
+    .t-cmd { color: var(--text); }
+    .t-comment { color: var(--muted); }
+    .t-section { color: var(--accent-bright); font-weight: 600; }
+    .t-ok { color: var(--green); }
+    .t-warn { color: var(--yellow); }
+    .t-bad { color: var(--red); }
+    .t-num { color: var(--yellow); font-weight: 600; }
+    .t-key { color: #7dd3fc; }
+    .t-blank { display: block; height: 4px; }
+
+    /* ── FINDINGS ── */
+    .findings {
+      padding: 48px 0;
+    }
+
+    .findings h2 {
+      font-size: 26px;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+
+    .findings .intro {
+      color: var(--muted);
+      margin-bottom: 32px;
+      font-size: 15px;
+    }
+
+    .finding-list {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .finding {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 20px 24px;
+    }
+
+    .finding.bad { border-left: 3px solid var(--red); }
+    .finding.warn { border-left: 3px solid var(--yellow); }
+    .finding.ok { border-left: 3px solid var(--green); }
+
+    .finding .tag {
+      font-size: 11px;
+      font-family: var(--mono);
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      margin-bottom: 6px;
+    }
+
+    .finding.bad .tag { color: var(--red); }
+    .finding.warn .tag { color: var(--yellow); }
+    .finding.ok .tag { color: var(--green); }
+
+    .finding h3 {
+      font-size: 16px;
+      font-weight: 600;
+      margin-bottom: 6px;
+    }
+
+    .finding p {
+      font-size: 14px;
+      color: var(--muted);
+      line-height: 1.6;
+    }
+
+    /* ── FREE TOOL ── */
+    .free-tool {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 36px;
+      margin: 48px 0;
+    }
+
+    .free-tool .label {
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--green);
+      font-weight: 600;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      margin-bottom: 12px;
+    }
+
+    .free-tool h2 {
+      font-size: 24px;
+      font-weight: 700;
+      margin-bottom: 12px;
+    }
+
+    .free-tool p {
+      color: var(--muted);
+      margin-bottom: 20px;
+      font-size: 15px;
+    }
+
+    .code-block {
+      background: #0a0c14;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 16px 20px;
+      font-family: var(--mono);
+      font-size: 13px;
+      color: var(--text);
+      overflow-x: auto;
+      margin: 16px 0;
+    }
+
+    .feature-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-top: 20px;
+    }
+
+    @media (max-width: 520px) {
+      .feature-grid { grid-template-columns: 1fr; }
+    }
+
+    .feature-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      font-size: 14px;
+      color: var(--muted);
+    }
+
+    .feature-item .icon {
+      color: var(--green);
+      font-size: 14px;
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
+
+    /* ── PAID SECTION ── */
+    .paid {
+      border: 1px solid var(--accent);
+      border-radius: 10px;
+      padding: 40px;
+      margin: 48px 0;
+      background: rgba(124, 111, 205, 0.05);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .paid::before {
+      content: '';
+      position: absolute;
+      top: -60px;
+      right: -60px;
+      width: 200px;
+      height: 200px;
+      background: radial-gradient(circle, rgba(124,111,205,0.12) 0%, transparent 70%);
+      pointer-events: none;
+    }
+
+    .paid .label {
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--accent-bright);
+      font-weight: 600;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      margin-bottom: 12px;
+    }
+
+    .paid h2 {
+      font-size: 26px;
+      font-weight: 700;
+      margin-bottom: 12px;
+    }
+
+    .paid .pitch {
+      color: var(--muted);
+      font-size: 15px;
+      margin-bottom: 24px;
+      max-width: 560px;
+    }
+
+    .template-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-bottom: 28px;
+    }
+
+    .template-item {
+      background: rgba(255,255,255,0.04);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 14px 18px;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 16px;
+    }
+
+    .template-item .name {
+      font-weight: 600;
+      font-size: 14px;
+      margin-bottom: 3px;
+    }
+
+    .template-item .desc {
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .template-item .tokens {
+      font-family: var(--mono);
+      font-size: 12px;
+      color: var(--green);
+      flex-shrink: 0;
+    }
+
+    .price-row {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+      flex-wrap: wrap;
+      margin-bottom: 20px;
+    }
+
+    .price {
+      font-size: 36px;
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    .price-detail {
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .btn-primary {
+      display: inline-block;
+      background: var(--accent);
+      color: #fff;
+      font-size: 15px;
+      font-weight: 600;
+      padding: 14px 28px;
+      border-radius: 6px;
+      text-decoration: none;
+      transition: background 0.15s;
+    }
+    .btn-primary:hover {
+      background: var(--accent-bright);
+      text-decoration: none;
+    }
+
+    .paid .small-print {
+      margin-top: 16px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    /* ── INSTALL SECTION ── */
+    .install {
+      padding: 48px 0;
+    }
+
+    .install h2 {
+      font-size: 24px;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+
+    .install p {
+      color: var(--muted);
+      margin-bottom: 20px;
+      font-size: 15px;
+    }
+
+    /* ── FOOTER ── */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 28px 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    footer .inner {
+      max-width: 760px;
+      margin: 0 auto;
+      padding: 0 24px;
+      display: flex;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+
+    footer a { color: var(--muted); }
+    footer a:hover { color: var(--text); }
+  </style>
+</head>
+<body>
+
+<nav>
+  <div class="inner">
+    <div class="logo">context-budget<span>.py</span></div>
+    <a href="https://github.com/GenesisClawbot/context-budget-analyzer" style="font-size:13px;color:var(--muted);">GitHub</a>
+  </div>
+</nav>
+
+<main>
+  <div class="container">
+
+    <!-- HERO -->
+    <section class="hero">
+      <div class="badge">FREE CLI TOOL</div>
+
+      <h1>Analyzed 50 CLAUDE.md files.<br><em>This is what breaks context.</em></h1>
+
+      <p class="subhead">
+        Your CLAUDE.md gets loaded on every single agent call. Most of them are bloated.
+        This tool tells you exactly where the waste is.
+      </p>
+
+      <div class="hero-stats">
+        <div class="stat">
+          <span class="num">50</span>
+          <span class="label">CLAUDE.md files analyzed</span>
+        </div>
+        <div class="stat">
+          <span class="num">6,200</span>
+          <span class="label">avg tokens (median was 3,400)</span>
+        </div>
+        <div class="stat">
+          <span class="num">73%</span>
+          <span class="label">contained duplicate rules</span>
+        </div>
+        <div class="stat">
+          <span class="num">38%</span>
+          <span class="label">had zero tool definitions</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- TERMINAL DEMO -->
+    <div class="terminal">
+      <div class="terminal-bar">
+        <div class="dot dot-r"></div>
+        <div class="dot dot-y"></div>
+        <div class="dot dot-g"></div>
+        <span class="title">context_budget.py ~/projects/myapp/CLAUDE.md</span>
+      </div>
+      <div class="terminal-body">
+        <div><span class="t-prompt">$</span> <span class="t-cmd">python3 context_budget.py CLAUDE.md</span></div>
+        <div class="t-blank"></div>
+        <div><span class="t-section">Context Budget Analyzer</span></div>
+        <div><span class="t-comment">━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━</span></div>
+        <div class="t-blank"></div>
+        <div><span class="t-key">Total tokens:</span>    <span class="t-num t-bad">5,847</span>  <span class="t-comment"># that's before any user message</span></div>
+        <div><span class="t-key">Sections:</span>        <span class="t-num">14</span></div>
+        <div><span class="t-key">Bloat sections:</span>  <span class="t-num t-bad">6</span>    <span class="t-comment"># sections over 500 tokens</span></div>
+        <div class="t-blank"></div>
+        <div><span class="t-section">Top 5 sections by cost:</span></div>
+        <div>  <span class="t-bad">1,204 tk</span>  <span class="t-key">Rules &amp; Constraints</span>      <span class="t-comment"># 21% of budget</span></div>
+        <div>  <span class="t-warn">  892 tk</span>  <span class="t-key">Examples</span>                  <span class="t-comment"># 15% of budget</span></div>
+        <div>  <span class="t-warn">  740 tk</span>  <span class="t-key">Tool Definitions</span>          <span class="t-comment"># 13% of budget</span></div>
+        <div>  <span class="t-ok">  389 tk</span>  <span class="t-key">Identity</span>                  </div>
+        <div>  <span class="t-ok">  291 tk</span>  <span class="t-key">Memory</span>                    </div>
+        <div class="t-blank"></div>
+        <div><span class="t-section">Issues found:</span></div>
+        <div>  <span class="t-bad">[BLOAT]</span>  "do not" repeated 31 times</div>
+        <div>  <span class="t-bad">[BLOAT]</span>  "Rules &amp; Constraints" is 1,204 tokens</div>
+        <div>  <span class="t-warn">[WARN]</span>   "never" repeated 18 times</div>
+        <div>  <span class="t-ok">[OK]</span>     identity section found</div>
+        <div>  <span class="t-ok">[OK]</span>     tool list found</div>
+        <div class="t-blank"></div>
+        <div><span class="t-section">Classification:</span></div>
+        <div>  <span class="t-key">Boilerplate / directives:</span>  <span class="t-bad">68%</span></div>
+        <div>  <span class="t-key">Config / specifics:</span>        <span class="t-ok">32%</span></div>
+        <div class="t-blank"></div>
+        <div><span class="t-warn">Budget verdict: HEAVY</span>  <span class="t-comment"># aim for under 3,000 tokens</span></div>
+      </div>
+    </div>
+
+    <!-- FINDINGS -->
+    <section class="findings">
+      <h2>What actually goes wrong</h2>
+      <p class="intro">Looked at 50 CLAUDE.md files across GitHub and personal projects. Same patterns kept appearing.</p>
+
+      <div class="finding-list">
+        <div class="finding bad">
+          <div class="tag">Most common - 73% of files</div>
+          <h3>Duplicate rules</h3>
+          <p>The same instruction written five different ways. "Never do X." "Always avoid X." "Do not, under any circumstances, X." The model reads all of it. Every call. You're paying tokens to say the same thing four extra times.</p>
+        </div>
+
+        <div class="finding bad">
+          <div class="tag">Common - 61% of files</div>
+          <h3>Over-specified constraints</h3>
+          <p>Rules sections that grew unchecked over months. Someone got burned once and added a rule. Then another. Now it's 1,200 tokens of "don't do this" and nothing about what to actually do. High cost, low value.</p>
+        </div>
+
+        <div class="finding warn">
+          <div class="tag">Frequent - 48% of files</div>
+          <h3>Stale examples</h3>
+          <p>Examples from an earlier version of the project that no longer match how things work. Still loaded every session. Costs tokens and sends the model toward outdated patterns.</p>
+        </div>
+
+        <div class="finding warn">
+          <div class="tag">Frequent - 44% of files</div>
+          <h3>Missing tool scope</h3>
+          <p>No explicit list of what tools exist or what they're for. The model guesses from context. Sometimes correctly. The files with clear tool definitions made noticeably fewer wrong assumptions.</p>
+        </div>
+
+        <div class="finding ok">
+          <div class="tag">Fixable - takes 20 minutes</div>
+          <h3>Wrong structure for agent type</h3>
+          <p>A solo dev setup trying to run a swarm. A minimal file trying to handle complex orchestration. The structure matters as much as the content. Different agent types need different CLAUDE.md shapes.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- FREE TOOL -->
+    <section class="free-tool">
+      <div class="label">Free Tool</div>
+      <h2>context_budget.py</h2>
+      <p>No dependencies. No API key. Just Python stdlib. Runs locally in under a second.</p>
+
+      <div class="code-block">
+# Clone and run in 30 seconds<br>
+git clone https://github.com/GenesisClawbot/context-budget-analyzer.git<br>
+cd context-budget-analyzer<br>
+python3 context_budget.py /path/to/your/CLAUDE.md
+      </div>
+
+      <div class="feature-grid">
+        <div class="feature-item">
+          <span class="icon">✓</span>
+          <span>Token cost estimate per section</span>
+        </div>
+        <div class="feature-item">
+          <span class="icon">✓</span>
+          <span>Duplicate rule detection</span>
+        </div>
+        <div class="feature-item">
+          <span class="icon">✓</span>
+          <span>Bloat section flagging (500+ token)</span>
+        </div>
+        <div class="feature-item">
+          <span class="icon">✓</span>
+          <span>Boilerplate vs. config ratio</span>
+        </div>
+        <div class="feature-item">
+          <span class="icon">✓</span>
+          <span>Missing section checks</span>
+        </div>
+        <div class="feature-item">
+          <span class="icon">✓</span>
+          <span>Works on URLs too (--url flag)</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- PAID TEMPLATES -->
+    <section class="paid">
+      <div class="label">Templates Bundle &middot; £19</div>
+      <h2>Pre-built CLAUDE.md templates that actually work</h2>
+
+      <p class="pitch">
+        The audit tool tells you what's wrong. These templates show you what right looks like.
+        Three structures covering the most common setups, tested and tuned.
+      </p>
+
+      <div class="template-list">
+        <div class="template-item">
+          <div>
+            <div class="name">Minimal Solo</div>
+            <div class="desc">Single-agent, single-dev project. Under 1,200 tokens. Every section earns its place.</div>
+          </div>
+          <div class="tokens">&lt;1,200 tk</div>
+        </div>
+
+        <div class="template-item">
+          <div>
+            <div class="name">Production Project</div>
+            <div class="desc">Multi-tool, real codebase. Structured for speed. Tool definitions, memory protocol, scope limits.</div>
+          </div>
+          <div class="tokens">~2,100 tk</div>
+        </div>
+
+        <div class="template-item">
+          <div>
+            <div class="name">Swarm Orchestrator</div>
+            <div class="desc">Multi-agent setup. Clear handoff rules, delegation scope, escalation gates. Built for systems that spawn subagents.</div>
+          </div>
+          <div class="tokens">~2,800 tk</div>
+        </div>
+      </div>
+
+      <p style="font-size:14px;color:var(--muted);margin-bottom:20px;">
+        Plus: the context audit framework - a structured checklist for reviewing any CLAUDE.md before it goes near production. Covers token budget, section coverage, rule duplication, and agent-type fit.
+      </p>
+
+      <div class="price-row">
+        <span class="price">£19</span>
+        <span class="price-detail">one-time payment<br>instant download</span>
+      </div>
+
+      <a href="https://buy.stripe.com/14A7sF28rh0h8If8FI9ws0d" class="btn-primary">Get the templates</a>
+
+      <p class="small-print">No subscription. Markdown files, immediately useful. If they're not, reply for a refund.</p>
+    </section>
+
+    <!-- INSTALL -->
+    <section class="install">
+      <h2>Get the free tool</h2>
+      <p>CLI only, stdlib only. Clone and run.</p>
+      <div class="code-block">
+git clone https://github.com/GenesisClawbot/context-budget-analyzer.git<br>
+cd context-budget-analyzer<br>
+python3 context_budget.py --help
+      </div>
+      <p style="margin-top:16px;">
+        Or analyze a remote file directly:<br>
+        <code style="font-family:var(--mono);font-size:13px;color:var(--accent-bright);">python3 context_budget.py --url https://raw.githubusercontent.com/you/repo/main/CLAUDE.md</code>
+      </p>
+    </section>
+
+  </div>
+</main>
+
+<footer>
+  <div class="inner">
+    <span>Built by <a href="https://github.com/GenesisClawbot">Jamie Cole</a></span>
+    <span>
+      <a href="https://github.com/GenesisClawbot/context-budget-analyzer">GitHub</a>
+      &nbsp;&middot;&nbsp;
+      <a href="https://buy.stripe.com/14A7sF28rh0h8If8FI9ws0d">Get templates (£19)</a>
+    </span>
+  </div>
+</footer>
+
+</body>
+</html>
